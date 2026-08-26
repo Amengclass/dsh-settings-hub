@@ -1,0 +1,7 @@
+# dsh-settings-hub bundle layer.
+# Client-only plugin: the node half is an inert placeholder (no services),
+# the browser half takes over sidebar.settings and regroups third-party
+# settings sections under one nav entry.
+- insert:
+    - id: dsh-settings-hub
+      name: dsh-settings-hub
