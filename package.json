@@ -1,7 +1,7 @@
 {
   "name": "dsh-settings-hub",
-  "version": "0.0.1",
-  "description": "Take over the settings shell (sidebar.settings) and regroup third-party plugins' settings sections under one collapsible \"插件管理\" nav group. Native sections (general/models/plugins/agent-presets) stay put; third-party section components are re-rendered unmodified inside the hub via a mini slot renderer.",
+  "version": "0.1.0",
+  "description": "Unify third-party plugin settings in DeepSeek Harness — auto-discover, group, and reorder plugin settings under one collapsible nav entry.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -13,8 +13,17 @@
     "index.js",
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "README_EN.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Amengclass/dsh-settings-hub.git"
+  },
+  "homepage": "https://github.com/Amengclass/dsh-settings-hub#readme",
+  "bugs": {
+    "url": "https://github.com/Amengclass/dsh-settings-hub/issues"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
