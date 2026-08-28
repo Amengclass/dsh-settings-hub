@@ -54,14 +54,19 @@ Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-par
 ### Install
 
 ```bash
-cd ~/.dsh/profiles/web
-npm install dsh-settings-hub
+dsh plugin --profile web add github:Amengclass/dsh-settings-hub
 ```
 
 ### Run
 
 ```bash
 dsh web
+```
+
+### Uninstall
+
+```bash
+dsh plugin --profile web remove dsh-settings-hub
 ```
 
 Open `http://127.0.0.1:3080` and click "设置" in the bottom-left corner.

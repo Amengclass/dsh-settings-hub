@@ -54,14 +54,19 @@
 ### 安装
 
 ```bash
-cd ~/.dsh/profiles/web
-npm install dsh-settings-hub
+dsh plugin --profile web add github:Amengclass/dsh-settings-hub
 ```
 
 ### 启动
 
 ```bash
 dsh web
+```
+
+### 卸载
+
+```bash
+dsh plugin --profile web remove dsh-settings-hub
 ```
 
 打开浏览器访问 `http://127.0.0.1:3080`，点击左下角「设置」即可看到效果。
