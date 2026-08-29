@@ -120,6 +120,19 @@ No configuration needed. Works out of the box:
 Plugins must register `settings.section` to be discovered. Some plugins (e.g. dsh-vision-router) use alternative registration mechanisms and are not yet supported.
 </details>
 
+<details>
+<summary>Blocked by pnpm minimumReleaseAge?</summary>
+
+pnpm 11 blocks packages published within 24 hours by default. If you get an older version, add a whitelist entry in your profile's `pnpm-workspace.yaml`:
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-settings-hub
+```
+
+Then reinstall.
+</details>
+
 ## Development
 
 ```bash

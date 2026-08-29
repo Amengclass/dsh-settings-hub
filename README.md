@@ -126,6 +126,19 @@ dsh plugin --profile web remove dsh-settings-hub
 排序保存在浏览器 localStorage 中。清除浏览器数据后排序会重置为默认。
 </details>
 
+<details>
+<summary>pnpm 安装时被拦截（minimumReleaseAge）？</summary>
+
+pnpm 11 默认禁止安装发布 24 小时内的新版本。如果安装到旧版，在 profile 的 `pnpm-workspace.yaml` 中添加白名单：
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-settings-hub
+```
+
+然后重新安装即可。
+</details>
+
 ## 开发
 
 ```bash
