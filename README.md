@@ -129,7 +129,7 @@ dsh plugin --profile web remove dsh-settings-hub
 <details>
 <summary>pnpm 安装时被拦截（minimumReleaseAge）？</summary>
 
-pnpm 11 默认禁止安装发布 24 小时内的新版本。如果安装到旧版，在 profile 的 `pnpm-workspace.yaml` 中添加白名单：
+pnpm 11 默认禁止安装发布 24 小时内的新版本。如果安装到旧版，在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 中添加白名单：
 
 ```yaml
 minimumReleaseAgeExclude:

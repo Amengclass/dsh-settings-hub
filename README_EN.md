@@ -123,7 +123,7 @@ Plugins must register `settings.section` to be discovered. Some plugins (e.g. ds
 <details>
 <summary>Blocked by pnpm minimumReleaseAge?</summary>
 
-pnpm 11 blocks packages published within 24 hours by default. If you get an older version, add a whitelist entry in your profile's `pnpm-workspace.yaml`:
+pnpm 11 blocks packages published within 24 hours by default. If you get an older version, add a whitelist entry in `~/.dsh/profiles/web/pnpm-workspace.yaml`:
 
 ```yaml
 minimumReleaseAgeExclude:
