@@ -60,6 +60,15 @@ Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-par
 dsh plugin --profile web add dsh-settings-hub
 ```
 
+> **pnpm 11 users**: pnpm blocks packages published within 24 hours by default. If you get an older version, add to `~/.dsh/profiles/web/pnpm-workspace.yaml`:
+>
+> ```yaml
+> minimumReleaseAgeExclude:
+>   - dsh-settings-hub
+> ```
+>
+> Then reinstall.
+
 Update:
 
 ```bash
