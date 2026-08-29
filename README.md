@@ -4,8 +4,9 @@
 
 **统一管理 DeepSeek Harness 第三方插件设置项的插件**
 
-[![Version](https://img.shields.io/github/v/release/Amengclass/dsh-settings-hub?color=blue&label=version)](https://github.com/Amengclass/dsh-settings-hub/releases)
-[![Downloads](https://img.shields.io/github/downloads/Amengclass/dsh-settings-hub/total?color=green)](https://github.com/Amengclass/dsh-settings-hub/releases)
+[![npm version](https://img.shields.io/npm/v/dsh-settings-hub?color=blue&label=npm)](https://www.npmjs.com/package/dsh-settings-hub)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-settings-hub?color=green&label=npm%20downloads)](https://www.npmjs.com/package/dsh-settings-hub)
+[![GitHub release](https://img.shields.io/github/v/release/Amengclass/dsh-settings-hub?color=blue&label=GitHub)](https://github.com/Amengclass/dsh-settings-hub/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-orange.svg)](https://github.com/deepseek-ai/dsh)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Amengclass/dsh-settings-hub/pulls)
@@ -52,6 +53,20 @@
 - Node.js 18+
 
 ### 安装
+
+**方式一：npm（推荐）**
+
+```bash
+dsh plugin --profile web add dsh-settings-hub
+```
+
+更新插件：
+
+```bash
+dsh plugin --profile web update dsh-settings-hub@latest
+```
+
+**方式二：GitHub**
 
 ```bash
 dsh plugin --profile web add github:Amengclass/dsh-settings-hub

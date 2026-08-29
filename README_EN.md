@@ -4,8 +4,9 @@
 
 **Unify third-party plugin settings in DeepSeek Harness**
 
-[![Version](https://img.shields.io/github/v/release/Amengclass/dsh-settings-hub?color=blue&label=version)](https://github.com/Amengclass/dsh-settings-hub/releases)
-[![Downloads](https://img.shields.io/github/downloads/Amengclass/dsh-settings-hub/total?color=green)](https://github.com/Amengclass/dsh-settings-hub/releases)
+[![npm version](https://img.shields.io/npm/v/dsh-settings-hub?color=blue&label=npm)](https://www.npmjs.com/package/dsh-settings-hub)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-settings-hub?color=green&label=npm%20downloads)](https://www.npmjs.com/package/dsh-settings-hub)
+[![GitHub release](https://img.shields.io/github/v/release/Amengclass/dsh-settings-hub?color=blue&label=GitHub)](https://github.com/Amengclass/dsh-settings-hub/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-orange.svg)](https://github.com/deepseek-ai/dsh)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Amengclass/dsh-settings-hub/pulls)
@@ -52,6 +53,20 @@ Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-par
 - Node.js 18+
 
 ### Install
+
+**Option1: npm (recommended)**
+
+```bash
+dsh plugin --profile web add dsh-settings-hub
+```
+
+Update:
+
+```bash
+dsh plugin --profile web update dsh-settings-hub@latest
+```
+
+**Option 2: GitHub**
 
 ```bash
 dsh plugin --profile web add github:Amengclass/dsh-settings-hub
