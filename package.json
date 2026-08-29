@@ -1,6 +1,6 @@
 {
   "name": "dsh-settings-hub",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unify third-party plugin settings in DeepSeek Harness — auto-discover, group, and reorder plugin settings under one collapsible nav entry.",
   "type": "module",
   "main": "index.js",
