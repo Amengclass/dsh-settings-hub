@@ -72,6 +72,14 @@ dsh plugin --profile web update dsh-settings-hub@latest
 dsh plugin --profile web add github:Amengclass/dsh-settings-hub
 ```
 
+**Option 3: From source**
+
+```bash
+git clone https://github.com/Amengclass/dsh-settings-hub.git
+cd ~/.dsh/profiles/web
+npm link /path/to/dsh-settings-hub
+```
+
 ### Run
 
 ```bash

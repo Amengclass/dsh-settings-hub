@@ -72,6 +72,14 @@ dsh plugin --profile web update dsh-settings-hub@latest
 dsh plugin --profile web add github:Amengclass/dsh-settings-hub
 ```
 
+**方式三：源码安装**
+
+```bash
+git clone https://github.com/Amengclass/dsh-settings-hub.git
+cd ~/.dsh/profiles/web
+npm link /path/to/dsh-settings-hub
+```
+
 ### 启动
 
 ```bash
