@@ -45,6 +45,12 @@ English | [中文](README.md) | [Changelog](CHANGELOG.md)
 
 Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-party plugin settings auto-collapse under "扩展设置项".
 
+## Screenshots
+
+| Collapsed | Expanded |
+|:---------:|:--------:|
+| ![Collapsed](assets/screenshot-collapsed.png) | ![Expanded](assets/screenshot-expanded.png) |
+
 ## Quick Start
 
 ### Prerequisites
