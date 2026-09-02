@@ -45,6 +45,12 @@
 
 原生设置项（通用设置/模型/插件/Agent 预设）保持原样，第三方插件的设置项自动折叠到「扩展设置项」下。
 
+## 截图
+
+| 折叠状态 | 展开状态 |
+|:--------:|:--------:|
+| ![折叠](assets/screenshot-collapsed.png) | ![展开](assets/screenshot-expanded.png) |
+
 ## 快速开始
 
 ### 前置条件
@@ -59,6 +65,15 @@
 ```bash
 dsh plugin --profile web add dsh-settings-hub
 ```
+
+> **pnpm 11 用户注意**：pnpm 默认禁止安装发布 24 小时内的新版本。如果安装到旧版，在 `~/.dsh/profiles/web/pnpm-workspace.yaml` 中添加：
+>
+> ```yaml
+> minimumReleaseAgeExclude:
+>   - dsh-settings-hub
+> ```
+>
+> 然后重新安装即可。
 
 更新插件：
 

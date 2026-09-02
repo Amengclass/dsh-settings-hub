@@ -45,6 +45,12 @@ English | [中文](README.md) | [Changelog](CHANGELOG.md)
 
 Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-party plugin settings auto-collapse under "扩展设置项".
 
+## Screenshots
+
+| Collapsed | Expanded |
+|:---------:|:--------:|
+| ![Collapsed](assets/screenshot-collapsed.png) | ![Expanded](assets/screenshot-expanded.png) |
+
 ## Quick Start
 
 ### Prerequisites
@@ -59,6 +65,15 @@ Native settings (General/Models/Plugins/Agent Presets) stay untouched. Third-par
 ```bash
 dsh plugin --profile web add dsh-settings-hub
 ```
+
+> **pnpm 11 users**: pnpm blocks packages published within 24 hours by default. If you get an older version, add to `~/.dsh/profiles/web/pnpm-workspace.yaml`:
+>
+> ```yaml
+> minimumReleaseAgeExclude:
+>   - dsh-settings-hub
+> ```
+>
+> Then reinstall.
 
 Update:
 
@@ -118,6 +133,19 @@ No configuration needed. Works out of the box:
 <summary>Newly installed plugin not appearing?</summary>
 
 Plugins must register `settings.section` to be discovered. Some plugins (e.g. dsh-vision-router) use alternative registration mechanisms and are not yet supported.
+</details>
+
+<details>
+<summary>Blocked by pnpm minimumReleaseAge?</summary>
+
+pnpm 11 blocks packages published within 24 hours by default. If you get an older version, add a whitelist entry in `~/.dsh/profiles/web/pnpm-workspace.yaml`:
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-settings-hub
+```
+
+Then reinstall.
 </details>
 
 ## Development
