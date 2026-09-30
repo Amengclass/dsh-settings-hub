@@ -25,6 +25,7 @@
 - **拖拽排序** — 支持拖拽调整分组和子项顺序，顺序持久化到 localStorage
 - **幽灵拖拽** — 拖拽时原位置保持不变，半透明幽灵跟随鼠标，视觉反馈清晰
 - **零侵入** — 不修改 DSH 源码，通过官方 shadow 机制接管 `sidebar.settings` 插槽
+- **双端兼容** — 同时支持 `dsh web` 与 DSH 桌面应用（DSH 0.1.x / 0.2.x）
 
 ## 工作原理
 
@@ -108,6 +109,8 @@ dsh plugin --profile web remove dsh-settings-hub
 ```
 
 打开浏览器访问 `http://127.0.0.1:3080`，点击左下角「设置」即可看到效果。
+
+> **桌面端用户**：DSH 桌面应用使用独立的 profile（`~/.dsh/profiles/desktop`），需要在**桌面端自己的插件管理**里安装本插件，而不是执行上面的 `dsh plugin --profile web add`。桌面端与 `dsh web` 互不影响，各自管理自己的插件。
 
 ## 配置
 

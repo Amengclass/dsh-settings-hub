@@ -25,6 +25,7 @@ English | [中文](README.md) | [Changelog](CHANGELOG.md)
 - **Drag reorder** — Drag to reorder groups and items, order persisted to localStorage
 - **Ghost drag** — Original item stays in place while a semi-transparent ghost follows the cursor
 - **Zero intrusion** — No DSH source modifications; uses the official shadow mechanism on `sidebar.settings`
+- **Works on both fronts** — Compatible with `dsh web` and the DSH desktop app (DSH 0.1.x / 0.2.x)
 
 ## How it works
 
@@ -108,6 +109,8 @@ dsh plugin --profile web remove dsh-settings-hub
 ```
 
 Open `http://127.0.0.1:3080` and click "设置" in the bottom-left corner.
+
+> **Desktop app users**: The DSH desktop app uses its own profile (`~/.dsh/profiles/desktop`), so install this plugin from the desktop app's own plugin manager rather than running `dsh plugin --profile web add`. The desktop app and `dsh web` are independent — each manages its own plugins.
 
 ## Configuration
 

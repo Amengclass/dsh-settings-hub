@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 export const name = "dsh-settings-hub";
 export const inject = ["webServer"];
@@ -51,7 +52,28 @@ function buildDepMap(profileDir) {
   return { installedPlugins, depMap };
 }
 
+/**
+ * Locate the profile this copy of the plugin is installed into.
+ *
+ * The web UI and the desktop app each boot their own profile
+ * (`~/.dsh/profiles/web` and `~/.dsh/profiles/desktop`), and they carry
+ * different plugin sets. Hardcoding one of them made the hub report the
+ * wrong dependency tree whenever the other profile booted. So walk up from
+ * this file until the enclosing profile's package.json shows up — the
+ * profile root is named `dsh-profile-*`.
+ */
 function resolveProfileDir() {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 5; i++) {
+    const pkg = readJson(path.join(dir, "package.json"));
+    if (pkg && typeof pkg.name === "string" && pkg.name.startsWith("dsh-profile-")) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fall back to the web profile when running outside an installed profile.
   return path.join(os.homedir(), ".dsh", "profiles", "web");
 }
 
