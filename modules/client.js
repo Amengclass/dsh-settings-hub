@@ -354,29 +354,57 @@ window.__ModuleLoader__.load({
 		function buildPluginSectionMap(sectionRows) {
 			const cache = pluginCtx?.modules?.loadCache;
 			const nameToModule = new Map();
+			const mods = []; // attribution fallbacks: { id, src }
 			if (cache) {
 				for (const [modId, mod] of cache) {
 					const name = mod?.exports?.name;
 					if (typeof name === 'string' && name) nameToModule.set(name, modId);
+					if (modId.startsWith('@deepseek-ai/')) continue;
+					const apply = mod?.exports?.apply;
+					if (typeof apply === 'function') mods.push({ id: modId, src: String(apply) });
 				}
 			}
 			const bare = (s) => String(s ?? '').replace(/^@[^/]+\//, '');
 			const norm = (s) => bare(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 			const installed = INSTALLED_PLUGINS.filter((p) => !SELF_PKGS.has(p));
+			const parentPkg = (modId) => INSTALLED_PLUGINS.includes(modId) ? modId : (DEP_MAP[modId] || modId);
+			const strong = (src, id) => src.includes(`id: "${id}"`) || src.includes(`id: '${id}'`)
+				|| src.includes(`id:"${id}"`) || src.includes(`id:'${id}'`);
+			const mentions = (src, id) => src.includes(`"${id}"`) || src.includes(`'${id}'`);
+			const tokensOf = (s) => String(s).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+			const tokEq = (a, b) => a === b
+				|| (a.length >= 3 && b.startsWith(a))
+				|| (b.length >= 3 && a.startsWith(b));
 
 			function ownerOf(row) {
 				// 1) registrant is the plugin's export name (e.g. "dsh-market").
 				//    Short anonymous ids ("Gb") are bundle tokens, not names.
 				const reg = row.registrant;
 				if (typeof reg === 'string' && reg && !/^[A-Za-z]{1,3}$/.test(reg)) {
-					const modId = nameToModule.get(reg);
-					const pkg = modId && (INSTALLED_PLUGINS.includes(modId) ? modId : DEP_MAP[modId]);
-					if (pkg) return pkg;
+					const modId = nameToModule.get(reg) || (cache && cache.has(reg) ? reg : null);
+					if (modId) return parentPkg(modId);
 					if (INSTALLED_PLUGINS.includes(reg)) return reg;
 					if (DEP_MAP[reg]) return DEP_MAP[reg];
 				}
-				// 2) Section id matches a package name: market → dshmarket,
-				//    opencode-go → dsh-opencode-go.
+				// 2) A module's apply() declares this section id, or merely
+				//    mentions it. One plugin often registers several sections
+				//    through a helper, so this is the only trace left and it is
+				//    what keeps a plugin's sections together.
+				const strongHit = mods.find((m) => strong(m.src, row.id));
+				if (strongHit) return parentPkg(strongHit.id);
+				const mentionHit = mods.find((m) => mentions(m.src, row.id));
+				if (mentionHit) return parentPkg(mentionHit.id);
+				// 3) Match the section id tokens against module ids
+				//    (opencode-go → dsh-opencode-go).
+				const st = tokensOf(row.id);
+				if (st.length) {
+					const tokenHit = mods.find((m) => {
+						const mt = tokensOf(m.id);
+						return st.every((tk) => mt.some((x) => tokEq(tk, x)));
+					});
+					if (tokenHit) return parentPkg(tokenHit.id);
+				}
+				// 4) Section id ↔ installed package name substring.
 				const sid = norm(row.id);
 				if (sid) {
 					const hits = installed.filter((p) => {
