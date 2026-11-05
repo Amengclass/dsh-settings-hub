@@ -508,10 +508,19 @@ window.__ModuleLoader__.load({
 		}
 
 		function PluginNavRow({ row, active, onSelect, onPointerDown, onPointerUp, isDragging, isDragOver, dragDirection }) {
-			// Child-level drop indicator: thin, lighter line on the indented row.
-			const indicatorShadow = isDragOver
-				? (dragDirection === "up" ? "inset 0 2px 0 0 var(--dsw-alias-label-secondary)" : "inset 0 -2px 0 0 var(--dsw-alias-label-secondary)")
-				: "none";
+			// Child-level drop indicator: same 2px lighter rule as before, now
+			// inset to the child content column instead of spanning the row.
+			const indicator = isDragOver
+				? jsxRuntime.jsx("div", {
+					style: {
+						position: "absolute", left: 32, right: 8, height: 2,
+						background: "var(--dsw-alias-label-secondary)",
+						top: dragDirection === "up" ? 0 : "auto",
+						bottom: dragDirection === "down" ? 0 : "auto",
+						pointerEvents: "none",
+					},
+				}, "drag-line")
+				: null;
 			return jsxRuntime.jsx("button", {
 				type: "button",
 				className: "dshub-plugin-nav-row",
@@ -521,17 +530,19 @@ window.__ModuleLoader__.load({
 				"data-plugin-id": row.id,
 				style: {
 					...NAV_CELL, height: 34, padding: "6px 12px 6px 32px", borderRadius: 10,
+					position: "relative",
 					fontSize: 13, lineHeight: "20px", marginBottom: 2,
 					color: active ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-label-tertiary)",
 					background: active ? "var(--dsw-specific-sidebar-nav-item-active)" : isDragging ? "var(--dsw-specific-sidebar-nav-item-hover)" : "none",
 					pointerEvents: isDragging ? "none" : "auto",
-					boxShadow: indicatorShadow,
 					cursor: isDragging ? "grabbing" : "pointer",
 					userSelect: "none",
 				},
 				title: row.label,
 				onClick: isDragging ? undefined : () => onSelect(row.id),
-				children: jsxRuntime.jsx("span", { style: NAV_LABEL, children: row.label }),
+				children: indicator
+					? [indicator, jsxRuntime.jsx("span", { style: NAV_LABEL, children: row.label }, "label")]
+					: jsxRuntime.jsx("span", { style: NAV_LABEL, children: row.label }),
 			});
 		}
 
