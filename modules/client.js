@@ -1,0 +1,977 @@
+﻿/**
+ * dsh-settings-hub — browser half.
+ *
+ * Takes over the settings shell by shadowing the `sidebar.settings` single
+ * slot (same cell, lower priority → lowest priority renders; officially
+ * sanctioned takeover, replaceRisk: "shadows-shipped-ui"). Our shell rebuilds
+ * the nav rail:
+ *
+ *   - native sections (general/models/plugins/agent-presets) keep their rows
+ *   - every other section collapses under one "扩展设置项" group
+ *
+ * Section content renders through a mini slot renderer: winners via
+ * ctx.slots.entriesOfSlot(), components re-rendered unmodified with props
+ * assembled from ctx.slots.hostFace() (official renderer data face). Child
+ * slots render through a bound renderSlot that validates the entry's own
+ * children declaration — the same authorization contract the official
+ * renderer enforces. The shipped shell stays registered; unloading this
+ * plugin restores it automatically via the cordis effect disposer.
+ */
+window.__ModuleLoader__.load({
+	id: "@aico/dsh-settings-hub",
+	factory: (require) => {
+		var module = { exports: {} };
+		var exports = module.exports;
+		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+		const react = require("react");
+		const jsxRuntime = require("react/jsx-runtime");
+		const slotsPkg = require("@deepseek-ai/dsh-client-ui-slots");
+		const primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+
+		/** Sections that keep their own top-level nav row (native set). */
+		const NATIVE_IDS = new Set(["general", "models", "plugins", "agent-presets"]);
+
+		/**
+		 * Resolve an icon across DSH generations.
+		 *
+		 * DSH 0.1.x names icons by pixel size (`IconSettingsOutline16`); 0.2.x,
+		 * which the desktop shell ships, renamed them to a visual-weight scale
+		 * (`IconSettingsOutlineMedium` / `Regular` / `Artwork`) and dropped the
+		 * numeric names. Passing a missing export straight to jsx() is React
+		 * error #130, which takes the whole settings shell down, so every lookup
+		 * goes through here and ends at a real component.
+		 */
+		function icon(...names) {
+			for (const name of names) {
+				const c = primitives[name];
+				if (c) return c;
+			}
+			return null;
+		}
+
+		/** jsx() an icon that may be absent in this DSH generation. */
+		function iconJsx(names, props) {
+			const c = Array.isArray(names) ? icon(...names) : names;
+			return c ? jsxRuntime.jsx(c, props) : null;
+		}
+
+		/** Per-row nav icon — mirrors the shipped shell's navIcon(id) mapping. */
+		function navIcon(id) {
+			const c = id === "models"
+				? icon("IconDataOutline16", "IconDataOutlineMedium", "IconDataOutlineRegular")
+				: id === "agent-presets"
+					? icon("IconAgentPresetOutline16", "IconAgentPresetOutlineMedium", "IconAgentPresetOutlineRegular")
+					: id === "plugins"
+						? icon("IconPersonalizationOutline16", "IconPersonalizationOutlineMedium", "IconPersonalizationOutlineRegular")
+						: icon("IconSettingsOutline16", "IconSettingsOutlineMedium", "IconSettingsOutlineRegular");
+			return c ? jsxRuntime.jsx(c, { size: 16 }) : null;
+		}
+
+		/* ------------------------------------------------------------------ *
+		 * Mini slot renderer (root-scope settings slots; no chains/stores).  *
+		 * ------------------------------------------------------------------ */
+
+		/**
+		 * uSES-with-selector hook over a bare observable source, cached per
+		 * source. Mirrors the official bindSnapshotSelector: subscribe notifies
+		 * on every store tick (stores mutate in place, so raw-snapshot identity
+		 * must NOT gate notification); the selector result is cached by eq.
+		 */
+		const hookCache = new WeakMap();
+		function observableHookOf(source) {
+			let hook = hookCache.get(source);
+			if (hook === undefined) {
+				hook = function useObservable(selector, eq) {
+					const [subscribe, getSnapshot] = react.useMemo(() => {
+						let lastRaw;
+						let lastSelected;
+						let has = false;
+						return [
+							(onStoreChange) => source.subscribe(onStoreChange),
+							() => {
+								const raw = source.getSnapshot();
+								if (!has || !(eq ? eq(lastRaw, raw) : Object.is(lastRaw, raw))) {
+									lastRaw = raw;
+									lastSelected = selector(raw);
+									has = true;
+								}
+								return lastSelected;
+							},
+						];
+					}, [source, selector]);
+					return react.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+				};
+				hookCache.set(source, hook);
+			}
+			return hook;
+		}
+
+		/** Locale t seat: fresh identity per revision so memoized children refresh. */
+		const seatCache = new WeakMap();
+		function makeLocaleSeat(face, ns) {
+			let perNs = seatCache.get(face);
+			if (!perNs) { perNs = new Map(); seatCache.set(face, perNs); }
+			const revision = face.getSnapshot().revision;
+			const cached = perNs.get(ns);
+			if (cached && cached.revision === revision) return cached.t;
+			const bound = face.bind(ns);
+			const t = (key, params) => bound(key, params);
+			perNs.set(ns, { revision, t });
+			return t;
+		}
+
+		/** Error boundary per entry — mirrors the official renderer isolation. */
+		class EntryBoundary extends react.Component {
+			state = { failed: false };
+			static getDerivedStateFromError() { return { failed: true }; }
+			componentDidCatch(error, info) {
+				console.error("[dsh-settings-hub] section entry crashed:", error?.stack ?? String(error), info?.componentStack);
+			}
+			render() {
+				if (this.state.failed) {
+					return jsxRuntime.jsx("div", { "data-slot-error": this.props.slotKey, children: "此插件的设置页渲染失败" });
+				}
+				return this.props.children;
+			}
+		}
+
+		/** Stable uSES pair over a slot's version counter. */
+		function useSlotVersion(ctx, key) {
+			const [subscribe, getVersion] = react.useMemo(() => [
+				(fn) => ctx.slots.subscribe(key, fn),
+				() => ctx.slots.getVersion(key),
+			], [ctx, key]);
+			return react.useSyncExternalStore(subscribe, getVersion, getVersion);
+		}
+
+		/**
+		 * Bound renderSlot for one entry: authorizes against the entry's own
+		 * children declaration (SlotOwnershipError semantics), then projects the
+		 * child slot's winners sorted by order. Dispatch options mirror the
+		 * official renderer: `entryKey` selects one keyed cell (the owner
+		 * dispatches one key at a time); `only` selects one list cell by id.
+		 */
+		function boundRenderSlotOf(ctx, entry) {
+			return function renderSlot(key, ownerProps, opts) {
+				if (!entry.children || !entry.children[key]) {
+					throw new Error(`SlotOwnershipError: '${key}' is not declared by this entry's children`);
+				}
+				return jsxRuntime.jsx(
+					ChildOutlet,
+					{ ctx, childKey: key, ownerProps: ownerProps ?? {}, only: opts?.only, entryKey: opts?.entryKey },
+					key,
+				);
+			};
+		}
+
+		/** Child-slot outlet: re-renders on ledger mutations of its key. */
+		function ChildOutlet({ ctx, childKey, ownerProps, only, entryKey }) {
+			const version = useSlotVersion(ctx, childKey);
+			const rendered = react.useMemo(() => {
+				const winners = ctx.slots.entriesOfSlot(childKey)
+					.filter((e) => {
+						if (only !== undefined && e.options.id !== only) return false;
+						if (entryKey !== undefined && e.options.key !== entryKey) return false;
+						return true;
+					})
+					.slice()
+					.sort((a, b) => (a.options.order ?? 0) - (b.options.order ?? 0));
+				if (winners.length === 0) return null;
+				return winners.map((e) => renderEntry(ctx, childKey, e, ownerProps));
+			}, [ctx, childKey, ownerProps, only, entryKey, version]);
+			return jsxRuntime.jsx(jsxRuntime.Fragment, { children: rendered });
+		}
+
+		/**
+		 * Assemble one winning entry's composed props and render its component.
+		 * Mirrors the official composition order: standard kit (useSessions/
+		 * useWorkspaces/t/renderSlot/useStore/actions) + inject face (its hooks
+		 * compartment bound to use<Name> selector hooks) + owner props (owner
+		 * last). Root scope → inject() runs with zero args; a declared store
+		 * appends `actions` as the second inject arg, exactly as the official
+		 * renderer does (InjectParams).
+		 */
+		function renderEntry(ctx, slotKey, entry, ownerProps) {
+			// hostFace() is provided by @deepseek-ai/dsh-client-runtime, which the
+			// desktop shell (DSH 0.2.x) no longer ships — it moved to
+			// dsh-client-ui-renderer. Sections that need nothing from the host face
+			// (the common case) still render fine on an empty kit, so degrade
+			// instead of crashing the whole settings shell.
+			const host = typeof ctx.slots.hostFace === "function" ? ctx.slots.hostFace() : undefined;
+			const kit = {};
+			if (host) {
+				kit.useSessions = host.sessions ? observableHookOf(host.sessions.list) : undefined;
+				kit.useWorkspaces = host.workspaces ? observableHookOf(host.workspaces.list) : undefined;
+			}
+			if (entry.locale !== undefined) {
+				const face = host?.locale;
+				if (face === undefined) throw new Error(`[dsh-settings-hub] entry locale '${entry.locale}' but no locale face installed`);
+				kit.t = makeLocaleSeat(face, entry.locale);
+			}
+			if (entry.children !== undefined) {
+				kit.renderSlot = boundRenderSlotOf(ctx, entry);
+			}
+			// Store seat: resolve the instance (root scope → ROOT_INSTANCE_KEY)
+			// and expose the uSES pair + actions, as standardKit does.
+			if (entry.store !== undefined) {
+				const store = host?.storeOf?.(entry, "root");
+				if (!store) throw new Error(`[dsh-settings-hub] entry store but no store face installed`);
+				kit.useStore = observableHookOf(store);
+				kit.actions = store.actions;
+			}
+			// Inject face: hooks compartment sources become use<Name> hooks;
+			// remaining keys pass through verbatim (InjectFace contract).
+			let injected = {};
+			if (typeof entry.inject === "function") {
+				const raw = entry.inject(kit.actions !== undefined ? kit.actions : undefined) ?? {};
+				const { hooks, ...rest } = raw;
+				injected = { ...rest };
+				if (hooks) {
+					for (const [name, source] of Object.entries(hooks)) {
+						const hookName = `use${name[0]?.toUpperCase() ?? ""}${name.slice(1)}`;
+						injected[hookName] = observableHookOf(source);
+					}
+				}
+			}
+			return jsxRuntime.jsx(
+				EntryBoundary,
+				{ slotKey, children: jsxRuntime.jsx(entry.component, { ...kit, ...injected, ...ownerProps }) },
+				entry,
+			);
+		}
+
+		/** Error boundary: catches render errors and shows a friendly fallback. */
+		class SectionErrorBoundary extends react.Component {
+			constructor(props) {
+				super(props);
+				this.state = { error: null };
+			}
+			static getDerivedStateFromError(error) {
+				return { error };
+			}
+			render() {
+				if (this.state.error) {
+					return jsxRuntime.jsx("div", {
+						style: { padding: 24, textAlign: "center" },
+						children: [
+							jsxRuntime.jsx("div", { style: { fontSize: 14, color: "var(--dsw-alias-label-tertiary)", marginBottom: 8 }, children: "加载失败" }),
+							jsxRuntime.jsx("div", { style: { fontSize: 12, color: "var(--dsw-alias-label-tertiary)", marginBottom: 16 }, children: "该插件设置项可能已被卸载，请重启 DeepSeek Harness" }),
+							this.props.onDismiss && jsxRuntime.jsx("button", {
+								type: "button",
+								onClick: this.props.onDismiss,
+								style: { padding: "6px 16px", borderRadius: 8, border: "1px solid var(--dsw-alias-border)", background: "none", cursor: "pointer", fontSize: 13, color: "var(--dsw-alias-label-primary)" },
+								children: "移除该项",
+							}),
+						],
+					});
+				}
+				return this.props.children;
+			}
+		}
+
+		/** Top-level settings.section outlet for the hub panel. */
+		function HubSectionOutlet({ ctx, ownerProps, only }) {
+			const version = useSlotVersion(ctx, "settings.section");
+			const rendered = react.useMemo(() => {
+				const winners = ctx.slots.entriesOfSlot("settings.section")
+					.filter((e) => e.options.id === only);
+				if (winners.length === 0) {
+					throw new Error(`Section '${only}' not found.`);
+				}
+				const hit = winners[0];
+				return renderEntry(ctx, "settings.section", hit, ownerProps);
+			}, [ctx, ownerProps, only, version]);
+			return jsxRuntime.jsx(jsxRuntime.Fragment, { children: rendered });
+		}
+
+		/* -------------------------------------------------- *
+		 * Hub shell chrome (modal panel + grouped nav rail). *
+		 * -------------------------------------------------- */
+
+		/** Shared row metrics — mirror the shipped shell's navCell exactly. */
+		const NAV_CELL = {
+			display: "flex", alignItems: "center", gap: 8, width: "100%", height: 40,
+			padding: "9px 16px 9px 12px", border: "none", borderRadius: 12, boxSizing: "border-box",
+			cursor: "pointer", color: "var(--dsw-alias-label-primary)", font: "inherit", fontSize: 14,
+			lineHeight: "22px", textAlign: "left", overflow: "hidden", background: "none",
+		};
+		const NAV_LABEL = { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+
+		/* ------------------------------------------------------------------ *
+		 * Plugin-row drag-and-drop reorder (localStorage-persisted).        *
+		 * ------------------------------------------------------------------ */
+
+		const GROUP_ORDER_KEY = 'dsh-settings-hub-group-order';
+		const SECTION_ORDER_KEY = 'dsh-settings-hub-section-order';
+		function loadGroupOrder() {
+			try { return JSON.parse(localStorage.getItem(GROUP_ORDER_KEY)) ?? []; } catch { return []; }
+		}
+		function saveGroupOrder(groups) {
+			try { localStorage.setItem(GROUP_ORDER_KEY, JSON.stringify(groups)); } catch {}
+		}
+		function loadSectionOrder() {
+			try { return JSON.parse(localStorage.getItem(SECTION_ORDER_KEY)) ?? {}; } catch { return {}; }
+		}
+		function saveSectionOrder(obj) {
+			try { localStorage.setItem(SECTION_ORDER_KEY, JSON.stringify(obj)); } catch {}
+		}
+
+		
+		let pluginCtx = null;
+
+// __DEP_MAP_START__
+		let INSTALLED_PLUGINS = [];
+		let DEP_MAP = {};
+
+		async function fetchDepMap() {
+			try {
+				const r = await fetch("/api/dsh-settings-hub/deps");
+				if (!r.ok) return;
+				const d = await r.json();
+				if (Array.isArray(d.installedPlugins)) INSTALLED_PLUGINS = d.installedPlugins;
+				if (d.depMap && typeof d.depMap === "object") DEP_MAP = d.depMap;
+			} catch {}
+		}
+// __DEP_MAP_END__
+
+		/**
+		 * Group the live settings.section rows by owning plugin.
+		 *
+		 * DSH 0.1.x let us scrape each client module's `apply` source for the
+		 * literal "settings.section". 0.2.x broke that: plugins such as
+		 * dshmarket register through an internal helper (`mountMarket(ctx)`),
+		 * so the literal never appears in the exported apply body and the old
+		 * scan produced an empty map — an "扩展设置项" group with no rows.
+		 *
+		 * Slot entries carry `registrant` (the registering plugin's export
+		 * name when it has one), which is the authoritative owner. Fall back
+		 * to matching the section id against installed package names; if
+		 * neither resolves, keep the section as its own group rather than
+		 * dropping it.
+		 */
+		const SELF_PKGS = new Set(['dsh-settings-hub', '@aico/dsh-settings-hub']);
+
+		function buildPluginSectionMap(sectionRows) {
+			const cache = pluginCtx?.modules?.loadCache;
+			const nameToModule = new Map();
+			if (cache) {
+				for (const [modId, mod] of cache) {
+					const name = mod?.exports?.name;
+					if (typeof name === 'string' && name) nameToModule.set(name, modId);
+				}
+			}
+			const bare = (s) => String(s ?? '').replace(/^@[^/]+\//, '');
+			const norm = (s) => bare(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+			const installed = INSTALLED_PLUGINS.filter((p) => !SELF_PKGS.has(p));
+
+			function ownerOf(row) {
+				// 1) registrant is the plugin's export name (e.g. "dsh-market").
+				//    Short anonymous ids ("Gb") are bundle tokens, not names.
+				const reg = row.registrant;
+				if (typeof reg === 'string' && reg && !/^[A-Za-z]{1,3}$/.test(reg)) {
+					const modId = nameToModule.get(reg);
+					const pkg = modId && (INSTALLED_PLUGINS.includes(modId) ? modId : DEP_MAP[modId]);
+					if (pkg) return pkg;
+					if (INSTALLED_PLUGINS.includes(reg)) return reg;
+					if (DEP_MAP[reg]) return DEP_MAP[reg];
+				}
+				// 2) Section id matches a package name: market → dshmarket,
+				//    opencode-go → dsh-opencode-go.
+				const sid = norm(row.id);
+				if (sid) {
+					const hits = installed.filter((p) => {
+						const pid = norm(p);
+						return pid === sid || pid.endsWith(sid) || pid.startsWith(sid);
+					});
+					if (hits.length) {
+						return hits.sort((a, b) => norm(b).length - norm(a).length)[0];
+					}
+				}
+				return null;
+			}
+
+			const groups = {};
+			for (const row of sectionRows) {
+				const pkg = ownerOf(row);
+				// Standalone sections still get a group of their own — never hide a row.
+				const key = pkg ? bare(pkg) : (row.label || row.id);
+				if (!key) continue;
+				if (!groups[key]) groups[key] = [];
+				groups[key].push(row.id);
+			}
+			return groups;
+		}
+
+		function NavRow({ row, active, onSelect }) {
+			return jsxRuntime.jsxs("button", {
+				type: "button",
+				style: { ...NAV_CELL, background: active ? "var(--dsw-specific-sidebar-nav-item-active)" : "none" },
+				onClick: () => onSelect(row.id),
+				children: [
+					navIcon(row.id),
+					jsxRuntime.jsx("span", { style: NAV_LABEL, children: row.label }),
+				],
+			});
+		}
+
+		/**
+		 * Group header row — same cell metrics as NavRow (icon 16px + label), plus
+		 * a trailing caret. Pure disclosure control: never shows a selected
+		 * background (VS Code / macOS settings pattern — the only highlight in
+		 * the rail is the active leaf row); hover uses the shipped nav token.
+		 */
+		function GroupRow({ open, onToggle, label }) {
+			return jsxRuntime.jsxs("button", {
+				type: "button",
+				className: "dshub-group-toggle",
+				style: NAV_CELL,
+				"aria-expanded": open,
+				onClick: onToggle,
+				children: [
+					iconJsx(["IconSparkle16", "IconSparkleMedium", "IconSparkleRegular"], { size: 16 }),
+					jsxRuntime.jsx("span", { style: NAV_LABEL, children: label }),
+					jsxRuntime.jsx("svg", {
+						width: 16, height: 16, viewBox: "0 0 16 16", flex: "none",
+						style: { color: "var(--dsw-alias-label-secondary)", transform: open ? "rotate(90deg)" : "none", transition: "transform .15s ease" },
+						"aria-hidden": "true",
+						children: jsxRuntime.jsx("path", {
+							d: "M6 4 L10 8 L6 12",
+							fill: "none", stroke: "currentColor", strokeWidth: 1.5,
+							strokeLinecap: "round", strokeLinejoin: "round",
+						}),
+					}),
+				],
+			});
+		}
+
+		/**
+		 * Child row — same grid as NavRow but indented one level.
+		 * Long-press (500ms) activates grab cursor and enters custom drag
+		 * mode; pointer events handle reorder without HTML5 Drag API (which
+		 * can't be gated on long-press). Hover/focus stay unchanged from
+		 * the pre-drag baseline.
+		 */
+		/** Visual separator for a plugin group — draggable as a whole group. */
+		function PluginGroupSeparator({ pluginName, onPointerDown, onPointerUp, isDragging, isDragOver, dragDirection }) {
+			const indicatorShadow = isDragOver
+				? (dragDirection === "up" ? "inset 0 2px 0 0 var(--dsw-alias-label-primary)" : "inset 0 -2px 0 0 var(--dsw-alias-label-primary)")
+				: "none";
+			return jsxRuntime.jsx("div", {
+				"data-plugin-id": "__group__" + pluginName,
+				onPointerDown: (e) => onPointerDown(e, "__group__" + pluginName),
+				onPointerUp,
+				onPointerCancel: onPointerUp,
+				style: {
+					display: "flex", alignItems: "center", width: "100%", height: 28,
+					padding: "4px 12px 4px 20px", boxSizing: "border-box",
+					fontSize: 11, fontWeight: 600,
+					color: "var(--dsw-alias-label-tertiary)",
+					opacity: 0.8,
+					marginTop: 8, marginBottom: 2,
+					cursor: isDragging ? "grabbing" : "grab", userSelect: "none",
+					boxShadow: indicatorShadow,
+				},
+				children: pluginName,
+			});
+		}
+
+		function PluginNavRow({ row, active, onSelect, onPointerDown, onPointerUp, isDragging, isDragOver, dragDirection }) {
+			const indicatorShadow = isDragOver
+				? (dragDirection === "up" ? "inset 0 2px 0 0 var(--dsw-alias-label-primary)" : "inset 0 -2px 0 0 var(--dsw-alias-label-primary)")
+				: "none";
+			return jsxRuntime.jsx("button", {
+				type: "button",
+				className: "dshub-plugin-nav-row",
+				onPointerDown: (e) => onPointerDown(e, row.id),
+				onPointerUp,
+				onPointerCancel: onPointerUp,
+				"data-plugin-id": row.id,
+				style: {
+					...NAV_CELL, height: 34, padding: "6px 12px 6px 32px", borderRadius: 10,
+					fontSize: 13, lineHeight: "20px", marginBottom: 2,
+					color: active ? "var(--dsw-alias-label-primary)" : "var(--dsw-alias-label-tertiary)",
+					background: active ? "var(--dsw-specific-sidebar-nav-item-active)" : isDragging ? "var(--dsw-specific-sidebar-nav-item-hover)" : "none",
+					pointerEvents: isDragging ? "none" : "auto",
+					boxShadow: indicatorShadow,
+					cursor: isDragging ? "grabbing" : "pointer",
+					userSelect: "none",
+				},
+				title: row.label,
+				onClick: isDragging ? undefined : () => onSelect(row.id),
+				children: jsxRuntime.jsx("span", { style: NAV_LABEL, children: row.label }),
+			});
+		}
+
+		function HubPanel({ rows, ctx, activeId, onSelect, onClose }) {
+			const active = rows.find((r) => r.id === activeId)?.id ?? rows[0]?.id;
+			// No global Escape handler — dshmarket (and other plugin modals) register
+			// capture-phase Escape on window + stopPropagation(). A bubble-phase
+			// listener on document fires after and closes the whole settings panel,
+			// making Escape look broken in their lightbox.
+			// Intercept DSH's 404 error → show position:fixed overlay over content panel.
+			react.useEffect(() => {
+				const ICON = '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:12px;color:var(--dsw-alias-label-tertiary);"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+				const BTN = 'display:inline-flex;align-items:center;gap:6px;padding:8px 20px;border-radius:20px;border:none;background:#333;color:#fff;cursor:pointer;font-size:13px;transition:background .15s,box-shadow .15s;';
+				const REFRESH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
+				const BTN_STYLE_TAG = '<style>.dshub-refresh-btn:hover{background:#444 !important;box-shadow:0 2px 8px rgba(0,0,0,.25) !important;}.dshub-refresh-btn:active{transform:scale(.97);}</style>';
+				const BODY = ICON
+					+ '<div style="font-size:14px;color:var(--dsw-alias-label-primary);margin-bottom:6px;font-weight:500;">加载失败</div>'
+					+ '<div style="font-size:12px;color:var(--dsw-alias-label-tertiary);margin-bottom:20px;">该插件可能已被卸载或停用<br>请重启 DeepSeek Harness</div>'
+					+ BTN_STYLE_TAG
+					+ '<button class="dshub-refresh-btn" onclick="location.reload()" style="' + BTN + '">' + REFRESH_ICON + '刷新页面</button>';
+				let overlay = null;
+				function isErrorElement(el) {
+					if (el.children.length > 3) return false;
+					if (el.classList?.contains('dshub-404-overlay')) return false;
+					const s = getComputedStyle(el);
+					if (s.display === 'none' || s.visibility === 'hidden') return false;
+					const t = el.textContent || '';
+					return t.includes('加载失败') && t.includes('HTTP') && t.includes('404');
+				}
+				function scan() {
+					const dialog = document.querySelector('[role="dialog"]');
+					if (!dialog) { removeOverlay(); return; }
+					let errEl = null;
+					dialog.querySelectorAll('*').forEach((el) => { if (!errEl && isErrorElement(el)) errEl = el; });
+					if (errEl && !overlay) {
+						const dr = dialog.getBoundingClientRect();
+						const er = errEl.getBoundingClientRect();
+						const computedBg = getComputedStyle(dialog).backgroundColor;
+						const bg = (computedBg && computedBg !== 'rgba(0, 0, 0, 0)') ? computedBg : '#fff';
+						overlay = document.createElement('div');
+						overlay.className = 'dshub-404-overlay';
+						overlay.style.cssText = 'position:fixed;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;z-index:2147483647;background:' + bg + ';top:' + er.top + 'px;left:' + er.left + 'px;width:' + (dr.right - er.left) + 'px;height:' + (dr.bottom - er.top) + 'px;';
+						overlay.innerHTML = BODY;
+						document.body.appendChild(overlay);
+					} else if (!errEl && overlay) {
+						removeOverlay();
+					}
+				}
+				function removeOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
+				const observer = new MutationObserver(scan);
+				observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style', 'class'] });
+				scan();
+				return () => { observer.disconnect(); removeOverlay(); };
+			}, []);
+			const [dismissedSections, setDismissedSections] = react.useState(() => new Set());
+			const nativeRows = rows.filter((r) => NATIVE_IDS.has(r.id));
+			const pluginRows = react.useMemo(
+				() => rows.filter((r) => !NATIVE_IDS.has(r.id) && !dismissedSections.has(r.id)),
+				[rows, dismissedSections]
+			);
+			// Derived from the live slot feed — no source scraping, no late
+			// re-scan timer. The feed bumps `rows` whenever a plugin registers
+			// or unregisters a section.
+			const pluginSectionMap = react.useMemo(() => buildPluginSectionMap(pluginRows), [pluginRows]);
+			const [groupOrder, setGroupOrder] = react.useState(() => {
+				const stored = loadGroupOrder();
+				const discovered = Object.keys(pluginSectionMap);
+				const merged = [...stored];
+				for (const g of discovered) { if (!merged.includes(g)) merged.push(g); }
+				return merged.filter((g) => discovered.includes(g));
+			});
+			const [sectionOrder, setSectionOrder] = react.useState(() => {
+				const stored = loadSectionOrder();
+				const result = {};
+				for (const g of groupOrder) {
+					const discovered = pluginSectionMap[g] || [];
+					const sOrder = (stored[g] || []).filter((id) => discovered.includes(id));
+					for (const id of discovered) { if (!sOrder.includes(id)) sOrder.push(id); }
+					result[g] = sOrder;
+				}
+				return result;
+			});
+			// Sync groupOrder/sectionOrder when pluginSectionMap loads async
+			const prevMapRef = react.useRef(pluginSectionMap);
+			react.useEffect(() => {
+				const prev = prevMapRef.current;
+				const curr = pluginSectionMap;
+				if (curr === prev) return;
+				prevMapRef.current = curr;
+				setGroupOrder((prevOrder) => {
+					const discovered = Object.keys(curr);
+					const merged = [...prevOrder];
+					for (const g of discovered) { if (!merged.includes(g)) merged.push(g); }
+					return merged.filter((g) => discovered.includes(g));
+				});
+				setSectionOrder((prevOrder) => {
+					const result = {};
+					for (const g of Object.keys(curr)) {
+						const discovered = curr[g] || [];
+						const sOrder = (prevOrder[g] || []).filter((id) => discovered.includes(id));
+						for (const id of discovered) { if (!sOrder.includes(id)) sOrder.push(id); }
+						result[g] = sOrder;
+					}
+					return result;
+				});
+			}, [pluginSectionMap]);
+			const flatItems = react.useMemo(() => {
+				const items = [];
+				for (const g of groupOrder) {
+					items.push({ type: "group", pluginName: g, id: "__group__" + g });
+					const secs = (sectionOrder[g] || []).map((id) => pluginRows.find((r) => r.id === id)).filter(Boolean);
+					for (const s of secs) { items.push({ type: "section", ...s, pluginName: g }); }
+				}
+				return items;
+			}, [groupOrder, sectionOrder, pluginRows]);
+			const [draggingId, setDraggingId] = react.useState(null);
+			const [dragOver, setDragOver] = react.useState({ id: null, direction: "down" });
+			const [ghostPos, setGhostPos] = react.useState(null);
+			const [dragStartPos, setDragStartPos] = react.useState(null);
+			// --- Long-press drag reorder (pointer events, localStorage) ---
+			// Mutable ref for document handlers (avoids stale closures).
+			const dragRef = react.useRef({
+				downId: null, downX: 0, downY: 0,
+				draggingId: null, dragOverId: null, targetIdx: 0, sortedRows: [], lastY: 0,
+			});
+			dragRef.current.flatItems = flatItems;
+			dragRef.current.groupOrder = groupOrder;
+			dragRef.current.sectionOrder = sectionOrder;
+
+			// Pointer-down: record start position, measure row height.
+			const handlePointerDown = react.useCallback((e, id) => {
+				if (e.button !== 0) return;
+				const ref = dragRef.current;
+				ref.downId = id;
+				ref.downX = e.clientX;
+				ref.downY = e.clientY;
+				ref.lastY = e.clientY;
+				ref.targetIdx = 0;
+				const el = e.currentTarget;
+				const rect = el.getBoundingClientRect();
+				setDragStartPos({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+			}, []);
+
+			// Pointer-up: finalize reorder, reset all state.
+			const handlePointerUp = react.useCallback(() => {
+				const ref = dragRef.current;
+				if (ref.draggingId && ref.dragOverId && ref.draggingId !== ref.dragOverId) {
+					const isGroupDrag = ref.draggingId.startsWith("__group__");
+					if (isGroupDrag) {
+						const pluginName = ref.draggingId.slice(9);
+						const fromIdx = ref.groupOrder.indexOf(pluginName);
+						const items = ref.flatItems;
+						let toGroupName = null;
+						for (let i = 0; i < items.length; i++) {
+							if (items[i].id === ref.dragOverId) {
+								toGroupName = items[i].pluginName;
+								break;
+							}
+						}
+						const toIdx = toGroupName ? ref.groupOrder.indexOf(toGroupName) : -1;
+						if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+							const newOrder = [...ref.groupOrder];
+							newOrder.splice(fromIdx, 1);
+							newOrder.splice(toIdx, 0, pluginName);
+							saveGroupOrder(newOrder);
+							setGroupOrder(newOrder);
+						}
+					} else {
+						const draggedItem = ref.flatItems.find((x) => x.id === ref.draggingId);
+						if (draggedItem && draggedItem.pluginName) {
+							const g = draggedItem.pluginName;
+							const secIds = [...(ref.sectionOrder[g] || [])];
+							const fromIdx = secIds.indexOf(ref.draggingId);
+							const overItem = ref.flatItems.find((x) => x.id === ref.dragOverId);
+							const toIdx = secIds.indexOf(ref.dragOverId);
+							if (overItem && overItem.type === "section" && overItem.pluginName === g && fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+								secIds.splice(fromIdx, 1);
+								secIds.splice(toIdx, 0, ref.draggingId);
+								const newSectionOrder = { ...ref.sectionOrder, [g]: secIds };
+								saveSectionOrder(newSectionOrder);
+								setSectionOrder(newSectionOrder);
+							}
+						}
+					}
+				}
+				ref.downId = null;
+				ref.draggingId = null;
+				ref.dragOverId = null;
+				ref.cachedAllRows = null;
+				setDraggingId(null);
+				setDragOver({ id: null, direction: "down" });
+				setGhostPos(null);
+				setDragStartPos(null);
+			}, []);
+
+			// Document-level pointermove/pointerup: always live while panel is open.
+			react.useEffect(() => {
+				const onMove = (e) => {
+					const ref = dragRef.current;
+					if (!ref.downId) return;
+					if (!ref.draggingId) {
+						const dx = e.clientX - ref.downX;
+						const dy = e.clientY - ref.downY;
+						if (Math.abs(dx) + Math.abs(dy) > 5) {
+							ref.draggingId = ref.downId;
+							ref.cachedAllRows = [...document.querySelectorAll("[data-plugin-id]")];
+							setDraggingId(ref.downId);
+							setGhostPos({ x: e.clientX, y: e.clientY });
+						}
+						return;
+					}
+					setGhostPos({ x: e.clientX, y: e.clientY });
+					const allDraggables = ref.cachedAllRows;
+					const draggedItem = ref.flatItems.find((x) => x.id === ref.draggingId);
+					const isSectionDrag = draggedItem && draggedItem.type === "section";
+					const allRows = isSectionDrag
+						? allDraggables.filter((el) => {
+							const item = ref.flatItems.find((x) => x.id === el.dataset.pluginId);
+							return item && item.type === "section" && item.pluginName === draggedItem.pluginName;
+						})
+						: allDraggables.filter((el) => {
+							if (el.dataset.pluginId === ref.draggingId) return false;
+							const item = ref.flatItems.find((x) => x.id === el.dataset.pluginId);
+							return !(item && item.type === "section" && item.pluginName === draggedItem?.pluginName);
+						});
+					const dir = e.clientY > ref.lastY ? "down" : "up";
+					ref.lastY = e.clientY;
+					let newTargetIdx = null;
+					for (let i = 0; i < allRows.length; i++) {
+						const rect = allRows[i].getBoundingClientRect();
+						if (e.clientY < rect.top || e.clientY > rect.bottom) continue;
+						const mid = rect.top + rect.height / 2;
+						if (dir === "down" && e.clientY > mid) {
+							newTargetIdx = i;
+						} else if (dir === "up" && e.clientY < mid) {
+							newTargetIdx = i;
+						}
+					}
+					if (newTargetIdx !== null) {
+						const filteredEl = allRows[newTargetIdx];
+						const origIdx = allDraggables.indexOf(filteredEl);
+						ref.targetIdx = dir === "up" ? origIdx : origIdx + 1;
+						const overId = filteredEl?.dataset.pluginId ?? null;
+						if (overId !== ref.dragOverId) {
+							ref.dragOverId = overId;
+							setDragOver({ id: overId, direction: dir });
+						}
+					} else if (ref.dragOverId) {
+						ref.dragOverId = null;
+						setDragOver({ id: null, direction: "down" });
+					}
+				};
+				const onUp = () => {
+					// Only process if a pointer-down originated from our panel.
+					if (!dragRef.current.downId) return;
+					handlePointerUp();
+				};
+				document.addEventListener("pointermove", onMove);
+				document.addEventListener("pointerup", onUp);
+				return () => {
+					document.removeEventListener("pointermove", onMove);
+					document.removeEventListener("pointerup", onUp);
+				};
+			}, [handlePointerUp]);
+
+			// Group opens by default when a child row is the active selection.
+			const [groupOpen, setGroupOpen] = react.useState(flatItems.some((x) => x.type === "section" && x.id === active));
+			return jsxRuntime.jsxs("div", {
+				style: { position: "fixed", inset: 0, zIndex: 1000, display: "flex", justifyContent: "center", alignItems: "center" },
+				role: "presentation",
+				children: [
+					jsxRuntime.jsx("div", { style: { position: "absolute", inset: 0, background: "var(--dsw-alias-bg-mask-1)" }, onClick: onClose }),
+					jsxRuntime.jsxs("div", {
+						style: {
+							position: "relative", zIndex: 1, display: "flex", overflow: "hidden", borderRadius: 24,
+							background: "var(--dsw-alias-bg-layer-2)", width: 800, maxWidth: "calc(100vw - 48px)",
+							height: "min(800px, 100vh - 48px)", boxShadow: "var(--dsw-shadow-lv3)",
+						},
+						role: "dialog", "aria-modal": "true",
+						children: [
+							jsxRuntime.jsxs("nav", {
+								...(draggingId ? { "data-dragging": "" } : {}),
+								style: { display: "flex", flexDirection: "column", flex: "none", gap: 18, width: 188, padding: "22px 12px 0", boxSizing: "border-box", cursor: draggingId ? "not-allowed" : undefined },
+								children: [
+									jsxRuntime.jsx("div", { style: { color: "var(--dsw-alias-label-primary)", padding: "0 12px", fontSize: 16, fontWeight: 500, lineHeight: "24px" }, children: "设置" }),
+									jsxRuntime.jsxs("div", { style: { display: "flex", flexDirection: "column", gap: 4 }, children: [
+										nativeRows.map((row) => jsxRuntime.jsx(NavRow, { row, active: row.id === active, onSelect }, row.id)),
+										pluginRows.length > 0 && jsxRuntime.jsxs("div", { children: [
+											jsxRuntime.jsx(GroupRow, {
+												open: groupOpen,
+												onToggle: () => setGroupOpen((v) => !v),
+												label: "扩展设置项",
+											}),
+											groupOpen && jsxRuntime.jsx("div", { children:
+												flatItems.map((item) => item.type === "group"
+													? jsxRuntime.jsx(PluginGroupSeparator, {
+														pluginName: item.pluginName,
+														onPointerDown: handlePointerDown,
+														onPointerUp: handlePointerUp,
+														isDragging: draggingId === item.id,
+														isDragOver: dragOver.id === item.id && draggingId !== item.id,
+														dragDirection: dragOver.direction,
+													}, item.id)
+													: jsxRuntime.jsx(PluginNavRow, {
+														row: item,
+														active: item.id === active,
+														onSelect,
+														onPointerDown: handlePointerDown,
+														onPointerUp: handlePointerUp,
+														isDragging: draggingId === item.id,
+														isDragOver: dragOver.id === item.id && draggingId !== item.id,
+														dragDirection: dragOver.direction,
+													}, item.id)
+												),
+											}),
+										] }, "dsh-settings-hub.group"),
+									] }),
+								],
+							}),
+							jsxRuntime.jsxs("div", { style: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }, children: [
+								jsxRuntime.jsx("div", { style: { display: "flex", justifyContent: "space-between", height: 54, padding: "20px 14px 8px 10px", boxSizing: "border-box" }, children:
+									jsxRuntime.jsx("button", {
+										type: "button", onClick: onClose, "aria-label": "关闭",
+										style: { width: 28, height: 28, border: "none", borderRadius: 28, background: "none", cursor: "pointer", color: "var(--dsw-alias-label-primary)", marginLeft: "auto", display: "inline-flex", justifyContent: "center", alignItems: "center" },
+										children: iconJsx(["IconCloseOutline16", "IconCloseOutlineMedium", "IconCloseOutlineRegular"], { size: 14 }),
+									}),
+								}),
+								jsxRuntime.jsx("div", { style: { flex: 1, minHeight: 0, padding: "0 24px 24px", overflowY: "auto" }, children:
+									active !== undefined && jsxRuntime.jsx(SectionErrorBoundary, {
+										onDismiss: () => {
+											// Hide the failed section; the map is derived, so keep
+											// the dismissal in state instead of mutating it.
+											setDismissedSections((prev) => {
+												const next = new Set(prev);
+												if (active) next.add(active);
+												return next;
+											});
+										},
+										children: jsxRuntime.jsx(HubSectionOutlet, { ctx, ownerProps: { close: onClose }, only: active }),
+									}),
+								}),
+							] }),
+						],
+					}),
+					ghostPos && draggingId && dragStartPos && (() => {
+						const draggedItem = flatItems.find((x) => x.id === draggingId);
+						const label = draggedItem?.label ?? "";
+						const isGroup = draggedItem?.type === "group";
+						const text = isGroup ? draggedItem.pluginName : label;
+						const dx = ghostPos.x - dragRef.current.downX;
+						const dy = ghostPos.y - dragRef.current.downY;
+						return jsxRuntime.jsx("div", {
+							style: {
+								position: "fixed",
+								left: dragStartPos.x + dx,
+								top: dragStartPos.y + dy,
+								width: dragStartPos.w,
+								height: dragStartPos.h,
+								padding: "6px 12px 6px 32px",
+								boxSizing: "border-box",
+								borderRadius: 10,
+								fontSize: 13, lineHeight: "20px", fontFamily: "inherit",
+								display: "flex", alignItems: "center",
+								color: "var(--dsw-alias-label-primary)",
+								opacity: 0.45,
+								background: "var(--dsw-specific-sidebar-nav-item-hover)",
+								zIndex: 9999, pointerEvents: "none",
+								overflow: "hidden", whiteSpace: "nowrap",
+							},
+							children: text,
+						});
+					})(),
+				],
+			});
+		}
+
+		/**
+		 * Hub root — replaces SettingsRoot in the sidebar.settings cell.
+		 * Receives the official standard kit (wide, useSections …) through the
+		 * ordinary renderer pipeline; `ctx` rides the inject face.
+		 */
+		function HubRoot(props) {
+			const { wide, useSections } = props;
+			const [open, setOpen] = react.useState(false);
+			const [activeId, setActiveId] = react.useState(undefined);
+			const rows = useSections((s) => s);
+			const close = react.useCallback(() => { setOpen(false); setActiveId(undefined); }, []);
+			return jsxRuntime.jsxs(jsxRuntime.Fragment, { children: [
+				jsxRuntime.jsxs("button", {
+					type: "button",
+					style: {
+						boxSizing: "border-box", cursor: "pointer", width: "calc(100% + 4px)", height: 42,
+						color: "var(--dsw-alias-label-primary)", background: "none", border: "none", borderRadius: 12,
+						flex: "none", alignItems: "center", gap: 8, margin: "4px -2px", padding: "0 10px 0 8px",
+						fontFamily: "inherit", fontSize: 14, lineHeight: "22px", display: "flex", overflow: "hidden",
+					},
+					"aria-haspopup": "dialog",
+					"aria-expanded": open,
+					onClick: () => setOpen(true),
+					children: [
+						wide ? iconJsx(["IconSettingsOutline16", "IconSettingsOutlineMedium", "IconSettingsOutlineRegular"], { size: 16 }) : iconJsx(["IconSettingsOutline14", "IconSettingsOutlineMedium", "IconSettingsOutlineRegular"], { size: 18 }),
+						wide && jsxRuntime.jsx("span", { style: { whiteSpace: "nowrap", overflow: "hidden" }, children: "设置" }),
+					],
+				}),
+				open && jsxRuntime.jsx(SectionErrorBoundary, {
+					children: jsxRuntime.jsx(HubPanel, { rows, ctx: props.ctx, activeId, onSelect: setActiveId, onClose: close }),
+				}),
+			] });
+		}
+
+		/* ---------------------------------------- *
+		 * Plugin apply: shadow sidebar.settings.   *
+		 * ---------------------------------------- */
+
+		// Only the hover affordance lives in CSS — everything else is inline
+		// style so the rows share the exact NAV_CELL metrics object.
+		const css = `
+.dshub-group-toggle:hover{background:var(--dsw-specific-sidebar-nav-item-hover)}
+.dshub-plugin-nav-row:not(:active){transition:background .1s}
+.dshub-plugin-nav-row:hover{background:var(--dsw-specific-sidebar-nav-item-hover) !important}
+nav[data-dragging] .dshub-plugin-nav-row:hover{background:none !important}
+nav[data-dragging]{cursor:not-allowed !important}
+`;
+		function ensureStyles() {
+			if (document.querySelector("style[data-plugin='dsh-settings-hub']")) return;
+			const tag = document.createElement("style");
+			tag.dataset.plugin = "dsh-settings-hub";
+			tag.textContent = css;
+			document.head.appendChild(tag);
+		}
+
+		const inject = ["slots", "modules"];
+		function apply(ctx) {
+			pluginCtx = ctx;
+			ensureStyles();
+			fetchDepMap();
+			// uSES feed over the settings.section WINNERS (entriesOfSlot): one row
+			// per cell id, sorted by order. Native ids stay in the feed — HubPanel
+			// splits them out.
+			let rowsVersion = -1;
+			let rows = [];
+			const shellInjected = () => ({
+				ctx,
+				hooks: {
+					sections: {
+						getSnapshot: () => {
+							const version = ctx.slots.getVersion("settings.section");
+							if (version !== rowsVersion) {
+								rowsVersion = version;
+								rows = ctx.slots.entriesOfSlot("settings.section")
+									.map((e) => ({
+										id: e.options.id ?? "",
+										order: e.options.order ?? 0,
+										label: slotsPkg.resolveSlotLabel(e.options.label) ?? "",
+										registrant: e.registrant ?? null,
+									}))
+									.sort((a, b) => a.order - b.order);
+							}
+							return rows;
+						},
+						subscribe: (listener) => ctx.slots.subscribe("settings.section", listener),
+					},
+				},
+			});
+			ctx.slots.inject("sidebar.settings", () => ctx.slots.register({
+				name: "sidebar.settings",
+				priority: -100, // lowest priority renders → shadows the shipped shell
+				inject: shellInjected,
+			}, HubRoot));
+		}
+
+		exports.apply = apply;
+		exports.inject = inject;
+		return module.exports;
+	},
+});

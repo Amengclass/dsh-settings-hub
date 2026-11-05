@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-settings-hub",
+    "description": "把第三方插件的设置项收进一个可折叠入口，自动按插件分组并支持排序"
+  }
+}
