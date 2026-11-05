@@ -75,7 +75,7 @@
 git clone -b aico/dsh-settings-hub https://github.com/Amengclass/dsh-settings-hub.git
 cd dsh-settings-hub
 npm pack
-dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.1.tgz
+dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.2.tgz
 ```
 
 也可以在 **DSH 设置 → 插件 → 添加插件** 里粘贴这个 tgz 的文件路径。
@@ -106,7 +106,7 @@ dsh web
 # 更新：重新打包后覆盖安装（文件名随版本变化）
 cd dsh-settings-hub
 npm pack
-dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.1.tgz
+dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.2.tgz
 
 # 卸载
 dsh plugin --profile web remove @aico/dsh-settings-hub

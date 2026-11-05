@@ -79,7 +79,7 @@ registry yet — install it from a local tarball.
 git clone -b aico/dsh-settings-hub https://github.com/Amengclass/dsh-settings-hub.git
 cd dsh-settings-hub
 npm pack
-dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.1.tgz
+dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.2.tgz
 ```
 
 You can also paste the `.tgz` path in **DSH Settings → Plugins → Add plugin**.
@@ -111,7 +111,7 @@ Open `http://127.0.0.1:3080` and click "设置" in the bottom-left corner.
 # Update: repack and reinstall (filename changes with the version)
 cd dsh-settings-hub
 npm pack
-dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.1.tgz
+dsh plugin --profile web add .\aico-dsh-settings-hub-0.2.2.tgz
 
 # Uninstall
 dsh plugin --profile web remove @aico/dsh-settings-hub
