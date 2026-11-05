@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## 0.2.3
+
+### Changed
+
+- 版本号与 AICO 内部分发版 `@aico/dsh-settings-hub` 统一为 `0.2.3`。本版无功能变更，代码内容与 `0.1.4` 相同。
+
 ## 0.1.4
 
 ### Fixed
